@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use log::{debug, info};
+use log::debug;
 
 use crate::{
     config::{self, Config},
@@ -36,16 +36,17 @@ pub(crate) async fn handle_stream(config: Arc<Config>, stream: TcpStream) -> Res
     };
 
     // Retrieve the SNI hostname.
+    let local_ip = &context::local_addr()?.to_string();
     let hostname = match tls.hostname() {
-        Some(name) => name,
-        // None was present, which is valid. But we can't do anything with that message.
+        Some(name) => {
+            debug!("Found SNI {name} in TLS handshake");
+            name
+        }
         None => {
-            tls::alert(rb.get_mut(), tls::AlertDescription::UnrecognizedName)?;
-            info!("No SNI hostname in message");
-            return Ok(());
+            debug!("No SNI found in TLS handshake, using IP address {local_ip}");
+            local_ip
         }
     };
-    debug!("Found SNI {hostname} in TLS handshake");
     context::set_hostname(hostname)?;
 
     let peer = &context::peer_addr()?;
