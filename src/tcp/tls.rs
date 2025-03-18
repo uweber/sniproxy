@@ -1,12 +1,12 @@
 use std::{
     io::{BufWriter, Write},
-    net::TcpStream,
+    net::{SocketAddr, TcpStream},
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::{bail, Result};
-use log::{debug, info};
+use log::debug;
 
 use crate::{
     config::{self, Config},
@@ -14,6 +14,19 @@ use crate::{
     reader::ReaderBuf,
     tls::{self, Tls},
 };
+
+fn extract_ip_string(addr: SocketAddr) -> String {
+    match addr {
+        SocketAddr::V6(v6) => {
+            if let Some(ipv4) = v6.ip().to_ipv4() {
+                ipv4.to_string()
+            } else {
+                v6.ip().to_string()
+            }
+        }
+        SocketAddr::V4(v4) => v4.ip().to_string(),
+    }
+}
 
 /// Handle TCP/TLS connections.
 pub(crate) async fn handle_stream(config: Arc<Config>, stream: TcpStream) -> Result<()> {
@@ -36,16 +49,18 @@ pub(crate) async fn handle_stream(config: Arc<Config>, stream: TcpStream) -> Res
     };
 
     // Retrieve the SNI hostname.
+    let local_ip = &extract_ip_string(context::local_addr()?);
+
     let hostname = match tls.hostname() {
-        Some(name) => name,
-        // None was present, which is valid. But we can't do anything with that message.
+        Some(name) => {
+            debug!("Found SNI {name} in TLS handshake");
+            name
+        }
         None => {
-            tls::alert(rb.get_mut(), tls::AlertDescription::UnrecognizedName)?;
-            info!("No SNI hostname in message");
-            return Ok(());
+            debug!("No SNI found in TLS handshake, using IP address {local_ip}");
+            local_ip
         }
     };
-    debug!("Found SNI {hostname} in TLS handshake");
     context::set_hostname(hostname)?;
 
     let peer = &context::peer_addr()?;
